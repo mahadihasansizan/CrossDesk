@@ -13,3 +13,5 @@ dotnet publish DeskRelay.csproj -c Release -r win-x64 --self-contained true -p:P
 The portable app is `../standalone/CrossDesk.exe`. To build Setup, install Inno Setup 6 and run `ISCC.exe /DAppVersion=1.2.0 /O. Setup.iss`. Use the version from the project file when building a new release.
 
 Use the same CrossDesk version on both PCs. Windows may ask you to allow CrossDesk through the firewall on the private network.
+
+See [Architecture](ARCHITECTURE.md) for pairing, input routing, transfers, and verification details.
