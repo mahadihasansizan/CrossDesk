@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>CrossDesk</AssemblyName><Product>CrossDesk</Product><ApplicationIcon>CrossDesk.ico</ApplicationIcon>
+    <Version>1.2.0</Version>
+  </PropertyGroup>
+  <ItemGroup><Resource Include="CrossDesk.png"/></ItemGroup></Project>
