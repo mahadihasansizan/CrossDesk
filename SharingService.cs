@@ -17,6 +17,7 @@ sealed partial class SharingService : IDisposable
 {
     readonly Dispatcher dispatcher;
     readonly string receiveRoot;
+    readonly IPAddress bindAddress;
     readonly TcpListener listener;
     readonly X509Certificate2 certificate;
     readonly byte[] secret = RandomNumberGenerator.GetBytes(32);
@@ -31,6 +32,7 @@ sealed partial class SharingService : IDisposable
     public SharingService(Dispatcher dispatcher, IPAddress bindAddress, string receiveRoot)
     {
         this.dispatcher = dispatcher;
+        this.bindAddress = bindAddress;
         this.receiveRoot = Path.GetFullPath(receiveRoot);
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         using var generated = new CertificateRequest("CN=Desk Relay Sharing", key, HashAlgorithmName.SHA256)
@@ -68,7 +70,7 @@ sealed partial class SharingService : IDisposable
     async Task<SslStream> Connect(CancellationToken token)
     {
         var fields = (remote ?? throw new IOException("Connect a computer first.")).Split(':');
-        var client = new TcpClient();
+        var client = new TcpClient(new IPEndPoint(bindAddress, 0));
         try
         {
             await client.ConnectAsync(IPAddress.Parse(fields[0]), int.Parse(fields[1]), token).ConfigureAwait(false);
@@ -76,7 +78,7 @@ sealed partial class SharingService : IDisposable
             var stream = new SslStream(client.GetStream(), false, (_, cert, _, _) => cert != null && CryptographicOperations.FixedTimeEquals(pin, cert.GetCertHash(HashAlgorithmName.SHA256)));
             try
             {
-                await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions { TargetHost = "Desk Relay Sharing" }, token).ConfigureAwait(false);
+                await stream.AuthenticateAsClientAsync(LanTls.ClientOptions("Desk Relay Sharing"), token).ConfigureAwait(false);
                 await stream.WriteAsync(Convert.FromHexString(fields[2]), token).ConfigureAwait(false);
                 return stream;
             }

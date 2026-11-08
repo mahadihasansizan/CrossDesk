@@ -14,6 +14,20 @@ enum Side : byte { Left, Right }
 enum Kind { KeepAlive, Move, Key, Button, Release, Focus }
 readonly record struct Frame(Kind Kind, int A = 0, int B = 0, int C = 0);
 
+static class LanTls
+{
+    // Both callers validate the exact certificate fingerprint from the pairing exchange.
+    public static SslClientAuthenticationOptions ClientOptions(string target) => new()
+    {
+        TargetHost = target,
+        CertificateChainPolicy = new X509ChainPolicy
+        {
+            DisableCertificateDownloads = true,
+            RevocationMode = X509RevocationMode.NoCheck
+        }
+    };
+}
+
 record Lan(IPAddress Address, IPAddress Mask, string Name)
 {
     public override string ToString() => $"{Name}  ·  {Address}";
@@ -178,10 +192,7 @@ sealed class Peer : IDisposable
             socket.NoDelay = true;
             tls = new SslStream(socket.GetStream(), false, (_, cert, _, _) => cert is not null &&
                 CryptographicOperations.FixedTimeEquals(pin, cert.GetCertHash(HashAlgorithmName.SHA256)));
-            await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
-            {
-                TargetHost = "Desk Relay"
-            }, token).ConfigureAwait(false);
+            await tls.AuthenticateAsClientAsync(LanTls.ClientOptions("Desk Relay"), token).ConfigureAwait(false);
             await tls.WriteAsync(secret, token).ConfigureAwait(false);
             await WriteName(tls, token).ConfigureAwait(false);
             await WriteEndpoint(tls, sharingEndpoint, token).ConfigureAwait(false);

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using System.Net;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,6 +15,8 @@ public partial class MainWindow : Window
     SharingService? sharing;
     CancellationTokenSource? pairing;
     bool closing;
+    readonly CancellationTokenSource updateLifetime = new();
+    static Version CurrentVersion => typeof(MainWindow).Assembly.GetName().Version!;
     int generation;
     readonly string receiveRoot = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Desk Relay");
@@ -34,8 +37,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            AdapterBox.ItemsSource = Lan.Find();
-            AdapterBox.SelectedIndex = 0;
+            RefreshAdapters();
             input = new InputEngine();
             input.StateChanged += UpdateControl;
             if (AdapterBox.Items.Count == 0)
@@ -47,6 +49,85 @@ public partial class MainWindow : Window
             JoinButton.IsEnabled = false;
             SetStatus("CrossDesk could not start. " + error.Message, true);
         }
+        using var install = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DeskRelay_is1");
+        if (install?.GetValue("InstallLocation") is string location &&
+            string.Equals(Environment.ProcessPath, Path.Combine(location, "CrossDesk.exe"), StringComparison.OrdinalIgnoreCase))
+            _ = CheckForUpdateAsync(manual: false);
+    }
+
+    void AdapterBox_Opened(object sender, EventArgs e) => RefreshAdapters();
+
+    void RefreshAdapters()
+    {
+        var previous = (AdapterBox.SelectedItem as Lan)?.Address;
+        var adapters = Lan.Find();
+        AdapterBox.ItemsSource = adapters;
+        AdapterBox.SelectedItem = adapters.FirstOrDefault(adapter => adapter.Address.Equals(previous))
+            ?? adapters.FirstOrDefault();
+    }
+
+    async void Update_Click(object sender, RoutedEventArgs e) => await CheckForUpdateAsync(manual: true);
+
+    async Task CheckForUpdateAsync(bool manual)
+    {
+        UpdateButton.IsEnabled = false;
+        try
+        {
+            var update = await CrossDeskUpdate.CheckAsync(CurrentVersion, updateLifetime.Token);
+            if (closing) return;
+            if (update is null)
+            {
+                if (manual) MessageBox.Show(this, "You have the latest CrossDesk release.", "CrossDesk updates");
+                return;
+            }
+            if (MessageBox.Show(this,
+                $"CrossDesk {update.Version} is available. Open GitHub to download Setup?\n\nSign in with an account that can access the private repository.",
+                "CrossDesk update available", MessageBoxButton.YesNo, MessageBoxImage.Question,
+                MessageBoxResult.No) == MessageBoxResult.Yes)
+                CrossDeskUpdate.Open(update.DownloadUrl);
+        }
+        catch (Exception)
+        {
+            if (manual && !closing && MessageBox.Show(this,
+                "The update check could not reach GitHub or access the private repository. Automatic checks need GitHub CLI signed in with repository access.\n\nOpen GitHub releases in your browser?",
+                "CrossDesk updates", MessageBoxButton.YesNo, MessageBoxImage.Information,
+                MessageBoxResult.No) == MessageBoxResult.Yes)
+            {
+                try { CrossDeskUpdate.Open(CrossDeskUpdate.ReleasesUrl); }
+                catch (Exception) { MessageBox.Show(this, CrossDeskUpdate.ReleasesUrl, "Open this address in your browser"); }
+            }
+        }
+        finally { UpdateButton.IsEnabled = true; }
+    }
+
+    async void Firewall_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this,
+            "Allow this CrossDesk executable to accept TCP connections from your local subnet, even if Windows changes the network profile?",
+            "Allow local connections", MessageBoxButton.YesNo, MessageBoxImage.Question,
+            MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        FirewallButton.IsEnabled = false;
+        try
+        {
+            string path = Environment.ProcessPath ?? throw new IOException("CrossDesk executable path is unavailable.");
+            var info = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "netsh.exe"))
+            {
+                UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden
+            };
+            foreach (string argument in new[] { "advfirewall", "firewall", "add", "rule", "name=CrossDesk local subnet",
+                "dir=in", "action=allow", "protocol=TCP", "profile=any", "remoteip=LocalSubnet", $"program={path}" })
+                info.ArgumentList.Add(argument);
+            using var process = Process.Start(info) ?? throw new IOException("Windows Firewall could not open.");
+            await process.WaitForExitAsync();
+            if (!closing)
+                MessageBox.Show(this, process.ExitCode == 0 ? "Local connections are allowed. Pair again using your Wi-Fi or Ethernet address."
+                    : "Windows did not add the firewall rule. Check with your device administrator.", "CrossDesk local connections");
+        }
+        catch (Exception error)
+        {
+            if (!closing) MessageBox.Show(this, error.Message, "CrossDesk local connections");
+        }
+        finally { FirewallButton.IsEnabled = true; }
     }
 
     SharingService PrepareSharing(Lan lan)
@@ -82,6 +163,7 @@ public partial class MainWindow : Window
 
     async void Create_Click(object sender, RoutedEventArgs e)
     {
+        RefreshAdapters();
         if (AdapterBox.SelectedItem is not Lan lan)
         {
             SetStatus("Choose a local network connection first.", true);
@@ -154,7 +236,7 @@ public partial class MainWindow : Window
             {
                 ResetConnection();
                 SetStatus("Could not connect. " + error.Message +
-                    " Check the pairing code and the Windows private-network firewall permission.", true);
+                    " Confirm both PCs are still on the same LAN and use Allow local connections on both PCs if Windows Firewall blocks pairing.", true);
             }
         }
         finally { cancellation.Dispose(); }
@@ -334,6 +416,8 @@ public partial class MainWindow : Window
 
     void OnClosed(object? sender, EventArgs e)
     {
+        updateLifetime.Cancel();
+        updateLifetime.Dispose();
         closing = true;
         ResetConnection();
         input?.Dispose();

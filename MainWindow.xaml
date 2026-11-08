@@ -70,6 +70,8 @@
      <TextBlock Text="Ctrl + Alt + Esc" FontSize="12" FontWeight="SemiBold"/>
      <TextBlock Text="Return to this PC" Style="{StaticResource Secondary}" FontSize="12" Margin="0,3,0,24"/>
      <TextBlock Text="Local network · Encrypted" Style="{StaticResource Secondary}" FontSize="11"/>
+     <Button x:Name="FirewallButton" Content="Allow local connections" Click="Firewall_Click" Margin="0,12,0,0"/>
+     <Button x:Name="UpdateButton" Content="Check for updates" Click="Update_Click" Margin="0,6,0,0"/>
     </StackPanel>
    </DockPanel>
   </Border>
@@ -133,7 +135,7 @@
       <TextBlock Text="Connect another PC" FontSize="18" FontWeight="SemiBold"/>
       <TextBlock Text="Open CrossDesk on both computers using the same local network." Style="{StaticResource Secondary}" Margin="0,7,0,18"/>
       <TextBlock Text="Local connection" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,7"/>
-      <ComboBox x:Name="AdapterBox" AutomationProperties.Name="Local network connection"/>
+      <ComboBox x:Name="AdapterBox" AutomationProperties.Name="Local network connection" DropDownOpened="AdapterBox_Opened"/>
       <StackPanel Orientation="Horizontal" Margin="0,16,0,16">
        <Button x:Name="CreateButton" Content="Create pairing code" Style="{StaticResource PrimaryButton}" Click="Create_Click"/>
        <Button x:Name="CancelPairButton" Content="Cancel" Margin="10,0,0,0" Visibility="Collapsed" Click="CancelPair_Click"/>

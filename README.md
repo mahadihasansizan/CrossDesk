@@ -10,8 +10,12 @@ Install the .NET 10 SDK for Windows. From the repository root, run:
 dotnet publish DeskRelay.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ../standalone
 ```
 
-The portable app is `../standalone/CrossDesk.exe`. To build Setup, install Inno Setup 6 and run `ISCC.exe /DAppVersion=1.2.0 /O. Setup.iss`. Use the version from the project file when building a new release.
+The portable app is `../standalone/CrossDesk.exe`. To build Setup, install Inno Setup 6 and run `ISCC.exe /DAppVersion=1.3.0 /O. Setup.iss`. Use the version from the project file when building a new release.
 
-Use the same CrossDesk version on both PCs. Windows may ask you to allow CrossDesk through the firewall on the private network.
+Use the same CrossDesk version on both PCs. Sharing works over the local network while both PCs remain connected and can reach each other, even if internet access is down. If Windows Firewall blocks pairing, select **Allow local connections** on both PCs and approve the Windows administrator prompt. The rule applies to that CrossDesk executable and accepts inbound TCP only from the local subnet across Windows network profiles.
+
+## Updates
+
+Installed copies check for new releases at startup. **Check for updates** also works from the app. Because the repository is private, automatic version checks require GitHub CLI on the Windows PATH, signed in with `gh auth login` using an account with access to this repository. When an update is found, CrossDesk asks before opening the exact Setup download in your browser. Sign in to GitHub in the browser if prompted, then run Setup. Without GitHub CLI, the button can still open the releases page. An unavailable update service does not interrupt local sharing.
 
 See [Architecture](ARCHITECTURE.md) for pairing, input routing, transfers, and verification details.

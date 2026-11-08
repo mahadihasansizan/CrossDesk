@@ -29,4 +29,8 @@ File data streams separately from input events. The receiver validates relative 
 
 The portable EXE bundles the .NET desktop runtime. Setup installs the same executable and shows the installed version before a repair or upgrade. Use the same version on both PCs.
 
+Pairing and transfer connections use numeric LAN addresses. Outbound connections bind to the selected adapter. Both TLS clients disable online certificate downloads and validate the pinned certificate from the pairing exchange. The optional firewall action permits inbound TCP for the running executable from the local subnet across Windows network profiles.
+
+Update checks run separately from the local connection. The app uses the signed-in GitHub CLI account to look up the latest private release and compares its version tag with the running assembly version. With user confirmation it opens the exact Setup asset in the browser. Setup handles the installation prompt.
+
 Local checks covered certificate-pinned pairing, rejection of an incorrect secret, bidirectional input message ordering, movement coalescing, disconnect handling, and an approved 8 MiB file transfer. Focus message ordering was checked on one PC. Physical two-PC keyboard handoff and Wi-Fi latency remain unverified. Windows can restrict input injection into elevated applications and secure desktops.
