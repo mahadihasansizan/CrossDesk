@@ -13,6 +13,8 @@ public partial class MainWindow : Window
     Peer? peer;
     SharingService? sharing;
     bool closing;
+    bool updatingLayout;
+    Point dragStart;
     bool settingsReady;
     AutoConnectSettings? autoSettings;
     CancellationTokenSource? automatic;
@@ -52,6 +54,7 @@ public partial class MainWindow : Window
         try
         {
             autoSettings = AutoConnectSettings.Load();
+            SideBox.SelectedIndex = autoSettings.Position == Side.Left ? 0 : 1;
             SharedCodeBox.Text = autoSettings.SharedCode;
             AutoConnectToggle.IsChecked = autoSettings.Enabled;
             StartupToggle.IsChecked = StartupSettings.Load();
@@ -193,8 +196,8 @@ public partial class MainWindow : Window
         ConnectionBadge.Foreground = (System.Windows.Media.Brush)FindResource("Success");
         RemoteName.Text = connected.Name;
         RemoteHint.Text = "Connected securely";
-        SideBox.SelectedIndex = connected.Side == Side.Left ? 0 : 1;
-        SideBox.IsEnabled = false;
+        SyncLayout();
+        SideBox.IsEnabled = true;
         if (ClipboardToggle.IsChecked == true) service.StartClipboard();
         UpdateControl();
         SetStatus("Connected over your local network. Move across the shared edge to switch computers.");
@@ -249,6 +252,7 @@ public partial class MainWindow : Window
 
     void UpdateControl()
     {
+        SyncLayout();
         ControlStatus.Text = peer is null
             ? "Pair both computers to share your mouse and keyboard."
             : input?.KeyboardFollowsPeer switch
@@ -265,6 +269,52 @@ public partial class MainWindow : Window
         bool left = SideBox.SelectedIndex == 0;
         Grid.SetColumn(LocalDevice, left ? 2 : 0);
         Grid.SetColumn(RemoteDevice, left ? 0 : 2);
+        if (updatingLayout || !settingsReady) return;
+        input?.SetSide(left ? Side.Left : Side.Right);
+        SaveLayout(left ? Side.Left : Side.Right);
+    }
+
+    void SyncLayout()
+    {
+        if (peer is null) return;
+        updatingLayout = true;
+        SideBox.SelectedIndex = peer.Side == Side.Left ? 0 : 1;
+        updatingLayout = false;
+        SaveLayout(peer.Side);
+    }
+
+    void SaveLayout(Side side)
+    {
+        if (autoSettings is null || autoSettings.Position == side) return;
+        try { autoSettings.Position = side; autoSettings.Save(); }
+        catch (Exception error) { SetStatus("Could not save screen arrangement. " + error.Message, true); }
+    }
+
+    void Device_Down(object sender, System.Windows.Input.MouseButtonEventArgs e) => dragStart = e.GetPosition(DeviceLayout);
+
+    void Device_Move(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (e.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
+        var point = e.GetPosition(DeviceLayout);
+        if (Math.Abs(point.X - dragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+            Math.Abs(point.Y - dragStart.Y) < SystemParameters.MinimumVerticalDragDistance) return;
+        DragDrop.DoDragDrop((DependencyObject)sender,
+            new DataObject("CrossDeskDevice", sender == LocalDevice ? "local" : "remote"), DragDropEffects.Move);
+    }
+
+    void Devices_DragOver(object sender, DragEventArgs e)
+    {
+        e.Effects = e.Data.GetDataPresent("CrossDeskDevice") ? DragDropEffects.Move : DragDropEffects.None;
+        e.Handled = true;
+    }
+
+    void Devices_Drop(object sender, DragEventArgs e)
+    {
+        if (e.Data.GetData("CrossDeskDevice") is not string device) return;
+        bool leftHalf = e.GetPosition(DeviceLayout).X < DeviceLayout.ActualWidth / 2;
+        bool remoteOnLeft = device == "remote" ? leftHalf : !leftHalf;
+        SideBox.SelectedIndex = remoteOnLeft ? 0 : 1;
+        e.Handled = true;
     }
 
     void Switch_Click(object sender, RoutedEventArgs e) => input?.Toggle(KeyboardOnly.IsChecked == true);
@@ -274,15 +324,22 @@ public partial class MainWindow : Window
     }
     void Disconnect_Click(object sender, RoutedEventArgs e)
     {
-        if (autoSettings is { Enabled: true, SharedCode.Length: >= 12 })
-        {
-            StartAutomatic();
-            SetStatus("Reconnecting with your saved code…");
-            return;
-        }
         StopAutomatic();
         ResetConnection();
         SetStatus("Disconnected. Both computers have local control.");
+    }
+    void Reconnect_Click(object sender, RoutedEventArgs e)
+    {
+        if (autoSettings?.SharedCode.Length >= 12)
+        {
+            settingsReady = false;
+            AutoConnectToggle.IsChecked = true;
+            settingsReady = true;
+            autoSettings.Enabled = true;
+            try { autoSettings.Save(); StartAutomatic(); }
+            catch (Exception error) { SetStatus("Could not reconnect. " + error.Message, true); }
+        }
+        else SetStatus("Enter a shared code and choose Save and connect.");
     }
     void Clipboard_Changed(object sender, RoutedEventArgs e)
     {
@@ -348,6 +405,7 @@ public partial class MainWindow : Window
             {
                 DeviceId = autoSettings?.DeviceId ?? Guid.NewGuid(),
                 SharedCode = SharedCodeBox.Text.Trim(),
+                Position = SideBox.SelectedIndex == 0 ? Side.Left : Side.Right,
                 Enabled = true
             };
             saved.Save();

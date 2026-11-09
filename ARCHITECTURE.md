@@ -40,3 +40,5 @@ Local checks covered certificate-pinned pairing, rejection of an incorrect secre
 The saved-code mode discovers peers through UDP port 45873. Persistent device IDs select complementary connection roles. Both peers prove possession of a PBKDF2-derived shared key using HMAC over fresh nonces, both device IDs, and the server certificate fingerprint. The saved code is protected with Windows DPAPI for the current user. Network loss causes another discovery and authentication attempt.
 
 Hooks and remote injection run on a dedicated STA message loop. UI updates are posted asynchronously. The receiver reads frame batches and merges consecutive pointer positions without crossing click, key, or focus boundaries. This prevents queued obsolete positions from being replayed after temporary congestion. TCP NoDelay remains enabled.
+
+Version 1.6 exchanges display extents on attachment and after display-size changes. Remote movement uses destination pixel coordinates. Crossing height is mapped proportionally in both directions. Live layout messages update complementary sides on both peers. Saved layout defaults to Right when loading older settings.

@@ -11,7 +11,7 @@ using System.Text;
 namespace DeskRelay;
 
 enum Side : byte { Left, Right }
-enum Kind { KeepAlive, Move, Key, Button, Release, Focus }
+enum Kind { KeepAlive, Move, Key, Button, Release, Focus, DisplayInfo, Layout }
 readonly record struct Frame(Kind Kind, int A = 0, int B = 0, int C = 0);
 
 static class LanTls
@@ -71,7 +71,7 @@ sealed class Invitation : IDisposable
         listener = new TcpListener(lan.Address, 0);
         try { listener.Start(4); }
         catch { certificate.Dispose(); throw; }
-        Code = $"DR2:{lan.Address}:{((IPEndPoint)listener.LocalEndpoint).Port}:" +
+        Code = $"DR3:{lan.Address}:{((IPEndPoint)listener.LocalEndpoint).Port}:" +
             $"{Convert.ToHexString(secret)}:{certificate.GetCertHashString(HashAlgorithmName.SHA256)}";
     }
 
@@ -144,7 +144,7 @@ sealed class Peer : IDisposable
     public string Name { get; }
     public string RemoteSharingEndpoint { get; init; } = string.Empty;
     public bool IsHost { get; init; }
-    public Side Side { get; }
+    public Side Side { get; internal set; }
     public bool Online => Volatile.Read(ref closed) == 0;
 
     internal Peer(TcpClient socket, SslStream tls, string name, Side side)
@@ -159,7 +159,7 @@ sealed class Peer : IDisposable
     public static async Task<Peer> Join(string code, CancellationToken cancel, string sharingEndpoint = "")
     {
         var parts = code.Trim().Split(':');
-        if (parts.Length != 5 || parts[0] != "DR2" || !IPAddress.TryParse(parts[1], out var address) ||
+        if (parts.Length != 5 || parts[0] != "DR3" || !IPAddress.TryParse(parts[1], out var address) ||
             address.AddressFamily != AddressFamily.InterNetwork ||
             !int.TryParse(parts[2], out int port) || port is < 1 or > 65535 ||
             parts[3].Length != 48 || parts[4].Length != 64)
@@ -310,7 +310,7 @@ sealed class Peer : IDisposable
             while (buffered - consumed >= frameSize)
             {
                 var kind = (Kind)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(consumed));
-                if (kind is < Kind.KeepAlive or > Kind.Focus) throw new IOException("Unknown input event.");
+                if (kind is < Kind.KeepAlive or > Kind.Layout) throw new IOException("Unknown input event.");
                 var frame = new Frame(kind,
                     BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(consumed + 4)),
                     BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(consumed + 8)),

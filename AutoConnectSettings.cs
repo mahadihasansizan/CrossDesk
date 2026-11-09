@@ -11,8 +11,9 @@ sealed class AutoConnectSettings
     static readonly string SettingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CrossDesk", "connection.json");
     public string SharedCode { get; set; } = "";
     public bool Enabled { get; set; }
+    public Side Position { get; set; } = Side.Right;
     public Guid DeviceId { get; set; } = Guid.NewGuid();
-    record StoredSettings(Guid DeviceId, bool Enabled, string ProtectedCode);
+    record StoredSettings(Guid DeviceId, bool Enabled, string ProtectedCode, Side? Position = null);
 
     public static AutoConnectSettings Load()
     {
@@ -29,6 +30,7 @@ sealed class AutoConnectSettings
         {
             DeviceId = stored.DeviceId,
             Enabled = stored.Enabled,
+            Position = stored.Position is Side.Left ? Side.Left : Side.Right,
             SharedCode = stored.ProtectedCode.Length == 0 ? "" : Encoding.UTF8.GetString(Protect(Convert.FromBase64String(stored.ProtectedCode), false))
         };
     }
@@ -41,7 +43,7 @@ sealed class AutoConnectSettings
         string temporary = SettingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            File.WriteAllText(temporary, JsonSerializer.Serialize(new StoredSettings(DeviceId, Enabled, encrypted)));
+            File.WriteAllText(temporary, JsonSerializer.Serialize(new StoredSettings(DeviceId, Enabled, encrypted, Position)));
             File.Move(temporary, SettingsPath, true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }

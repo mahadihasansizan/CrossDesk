@@ -91,11 +91,14 @@
      <StackPanel>
       <Grid>
        <TextBlock Text="Your devices" FontSize="18" FontWeight="SemiBold"/>
-       <Button x:Name="DisconnectButton" Content="Reconnect" HorizontalAlignment="Right" Padding="12,5" MinHeight="30" Visibility="Collapsed" Click="Disconnect_Click"/>
+       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+        <Button Content="Reconnect" Padding="12,5" MinHeight="30" Click="Reconnect_Click" Margin="0,0,8,0"/>
+        <Button x:Name="DisconnectButton" Content="Disconnect" Padding="12,5" MinHeight="30" Visibility="Collapsed" Click="Disconnect_Click"/>
+       </StackPanel>
       </Grid>
-      <Grid Margin="0,24,0,20">
+      <Grid x:Name="DeviceLayout" Margin="0,24,0,20" AllowDrop="True" DragOver="Devices_DragOver" Drop="Devices_Drop">
        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="44"/><ColumnDefinition/></Grid.ColumnDefinitions>
-       <StackPanel x:Name="LocalDevice" Grid.Column="0">
+       <StackPanel x:Name="LocalDevice" Grid.Column="0" PreviewMouseLeftButtonDown="Device_Down" PreviewMouseMove="Device_Move" Cursor="Hand">
         <Border Height="108" MaxWidth="240" Background="{StaticResource AccentTint}" BorderBrush="{StaticResource Accent}" BorderThickness="2" CornerRadius="10">
          <StackPanel VerticalAlignment="Center" Margin="14">
           <TextBlock x:Name="LocalName" Text="This PC" FontWeight="SemiBold" TextAlignment="Center" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
@@ -106,7 +109,7 @@
        </StackPanel>
        <Path Grid.Column="1" Data="M 1,6 L 25,6 M 1,6 L 6,1 M 1,6 L 6,11 M 25,6 L 20,1 M 25,6 L 20,11"
          Stroke="{StaticResource Muted}" StrokeThickness="1.4" Width="26" Height="12" VerticalAlignment="Center"/>
-       <StackPanel x:Name="RemoteDevice" Grid.Column="2">
+       <StackPanel x:Name="RemoteDevice" Grid.Column="2" PreviewMouseLeftButtonDown="Device_Down" PreviewMouseMove="Device_Move" Cursor="Hand">
         <Border Height="108" MaxWidth="240" Background="{StaticResource Canvas}" BorderBrush="{StaticResource Line}" BorderThickness="2" CornerRadius="10">
          <StackPanel VerticalAlignment="Center" Margin="14">
           <TextBlock x:Name="RemoteName" Text="Your other PC" FontWeight="SemiBold" TextAlignment="Center" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
@@ -118,7 +121,7 @@
       </Grid>
       <Grid>
        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="170"/></Grid.ColumnDefinitions>
-       <TextBlock Text="Other computer sits to your" VerticalAlignment="Center" Style="{StaticResource Secondary}"/>
+       <TextBlock Text="Drag screens to arrange, or choose a side" TextWrapping="Wrap" VerticalAlignment="Center" Style="{StaticResource Secondary}"/>
        <ComboBox x:Name="SideBox" Grid.Column="1" SelectedIndex="1" SelectionChanged="Side_Changed" AutomationProperties.Name="Position of other computer">
         <ComboBoxItem Content="Left"/><ComboBoxItem Content="Right"/>
        </ComboBox>

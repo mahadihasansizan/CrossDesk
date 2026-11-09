@@ -23,7 +23,7 @@ static class AutoConnect
     {
         sharedCode = sharedCode.Trim();
         if (sharedCode.Length is < 12 or > 128) throw new ArgumentException("Use a shared code between 12 and 128 characters.");
-        byte[] passwordKey = await Task.Run(() => Rfc2898DeriveBytes.Pbkdf2(sharedCode, "CrossDesk auto-connect v1"u8, 600_000, HashAlgorithmName.SHA256, 32), token).ConfigureAwait(false);
+        byte[] passwordKey = await Task.Run(() => Rfc2898DeriveBytes.Pbkdf2(sharedCode, "CrossDesk auto-connect v2"u8, 600_000, HashAlgorithmName.SHA256, 32), token).ConfigureAwait(false);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
         using var signingKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var request = new CertificateRequest("CN=CrossDesk automatic connection", signingKey, HashAlgorithmName.SHA256);
@@ -42,7 +42,7 @@ static class AutoConnect
             udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             udp.Client.Bind(new IPEndPoint(IPAddress.Any, discoveryPort));
             udp.EnableBroadcast = true;
-            var beacon = new Beacon("CrossDesk-A1", device, ((IPEndPoint)listener.LocalEndpoint).Port,
+            var beacon = new Beacon("CrossDesk-A2", device, ((IPEndPoint)listener.LocalEndpoint).Port,
                 certificate.GetCertHashString(HashAlgorithmName.SHA256));
             var announcement = JsonSerializer.SerializeToUtf8Bytes(beacon);
             var address = lan.Address.GetAddressBytes();
@@ -111,7 +111,7 @@ static class AutoConnect
                         Beacon? candidate;
                         try { candidate = JsonSerializer.Deserialize<Beacon>(packet.Buffer); }
                         catch (JsonException) { continue; }
-                        if (candidate == null || candidate.Protocol != "CrossDesk-A1" || candidate.Device.CompareTo(device) <= 0 || candidate.Port is < 1 or > 65535 || candidate.Fingerprint?.Length != 64) continue;
+                        if (candidate == null || candidate.Protocol != "CrossDesk-A2" || candidate.Device.CompareTo(device) <= 0 || candidate.Port is < 1 or > 65535 || candidate.Fingerprint?.Length != 64) continue;
                         if (nextTry.TryGetValue(candidate.Device, out long due) && Environment.TickCount64 < due) continue;
                         if (nextTry.Count > 128) nextTry.Clear();
                         nextTry[candidate.Device] = Environment.TickCount64 + 5000;

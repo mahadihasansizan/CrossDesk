@@ -28,6 +28,7 @@ sealed class InputEngine : IDisposable
     int localButtons;
     double virtualX, virtualY;
     Native.Point anchor;
+    int remoteWidth, remoteHeight, advertisedWidth, advertisedHeight;
     long ignoreEdgeUntil;
     volatile bool isRemote;
     public bool IsRemote { get => isRemote; private set => isRemote = value; }
@@ -80,7 +81,7 @@ sealed class InputEngine : IDisposable
             throw new Win32Exception(error, "Windows could not start input sharing.");
         }
         watchdog = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Input,
-            (_, _) => { if (peer is { Online: false }) Detach(); }, loop);
+            (_, _) => { if (peer is { Online: false }) Detach(); else PublishDisplaySize(); }, loop);
         watchdog.Start();
     }
 
@@ -90,6 +91,8 @@ sealed class InputEngine : IDisposable
         if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => Attach(connection)); return; }
         Detach();
         peer = connection;
+        remoteWidth = remoteHeight = advertisedWidth = advertisedHeight = 0;
+        PublishDisplaySize();
         SetKeyboardFocus(!connection.IsHost);
         edgeArmed = false;
     }
@@ -112,9 +115,10 @@ sealed class InputEngine : IDisposable
         else StartRemote(onlyKeyboard);
     }
 
-    void StartRemote(bool onlyKeyboard)
+    void StartRemote(bool onlyKeyboard, Native.Point? crossingPoint = null)
     {
         if (peer is not { Online: true } || localButtons != 0) return;
+        if (!onlyKeyboard && (remoteWidth < 2 || remoteHeight < 2)) return;
         if (!peer.Send(new Frame(Kind.Focus, 1))) return;
         ReleaseReceived();
         keyboardOnly = onlyKeyboard;
@@ -122,13 +126,14 @@ sealed class InputEngine : IDisposable
         SetKeyboardFocus(true);
         var bounds = Bounds();
         Native.GetCursorPos(out var point);
-        virtualX = peer.Side == Side.Right ? 1 : bounds.Width - 2;
-        virtualY = Math.Clamp(point.Y - bounds.Top, 0, bounds.Height - 1);
+        point = crossingPoint ?? point;
+        virtualX = peer.Side == Side.Right ? 3 : remoteWidth - 4;
+        virtualY = PointerGeometry.MapHeight(point.Y - bounds.Top, bounds.Height, remoteHeight);
         anchor = new Native.Point { X = bounds.Left + bounds.Width / 2, Y = bounds.Top + bounds.Height / 2 };
         if (!onlyKeyboard)
         {
             Warp(anchor);
-            SendPosition(bounds.Width, bounds.Height);
+            SendPosition(remoteWidth, remoteHeight);
         }
         Notify();
     }
@@ -156,7 +161,7 @@ sealed class InputEngine : IDisposable
             Warp(new Native.Point
             {
                 X = peer?.Side == Side.Right ? bounds.Left + bounds.Width - 4 : bounds.Left + 3,
-                Y = bounds.Top + (int)Math.Clamp(virtualY, 0, bounds.Height - 1)
+                Y = bounds.Top + (int)PointerGeometry.MapHeight(virtualY, remoteHeight, bounds.Height)
             });
         }
         Notify();
@@ -180,6 +185,25 @@ sealed class InputEngine : IDisposable
         if (disposed) return;
         if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => Receive(frame)); return; }
         if (disposed) return;
+        if (frame.Kind == Kind.DisplayInfo)
+        {
+            if (frame.A is < 8 or > 65536 || frame.B is < 8 or > 65536) return;
+            if (IsRemote) ReturnLocal();
+            remoteWidth = frame.A;
+            remoteHeight = frame.B;
+            return;
+        }
+        if (frame.Kind == Kind.Layout)
+        {
+            if (frame.A is not (0 or 1) || peer is null) return;
+            StopRemote();
+            ReleaseReceived();
+            peer.Side = (Side)frame.A;
+            SetKeyboardFocus(true);
+            edgeArmed = false;
+            Notify();
+            return;
+        }
         if (frame.Kind == Kind.Focus)
         {
             if (frame.A is not (0 or 1)) return;
@@ -310,13 +334,13 @@ sealed class InputEngine : IDisposable
             if (IsRemote && !keyboardOnly)
             {
                 virtualX += mouse.Point.X - anchor.X;
-                virtualY = Math.Clamp(virtualY + mouse.Point.Y - anchor.Y, 0, bounds.Height - 1);
-                bool back = peer?.Side == Side.Right ? virtualX < 0 : virtualX >= bounds.Width;
+                virtualY = Math.Clamp(virtualY + mouse.Point.Y - anchor.Y, 0, remoteHeight - 1);
+                bool back = peer?.Side == Side.Right ? virtualX < 0 : virtualX >= remoteWidth;
                 if (back && forwardedKeys.Count == 0 && localButtons == 0) ReturnLocal();
                 else
                 {
-                    virtualX = Math.Clamp(virtualX, 0, bounds.Width - 1);
-                    SendPosition(bounds.Width, bounds.Height);
+                    virtualX = Math.Clamp(virtualX, 0, remoteWidth - 1);
+                    SendPosition(remoteWidth, remoteHeight);
                 }
                 return 1;
             }
@@ -329,7 +353,7 @@ sealed class InputEngine : IDisposable
             if (!IsRemote && !keyboardOnly && peer is { Online: true } && edge && edgeArmed &&
                 Environment.TickCount64 > ignoreEdgeUntil && localButtons == 0)
             {
-                StartRemote(false);
+                StartRemote(false, mouse.Point);
                 return 1;
             }
             return Native.CallNextHookEx(mouseHook, code, message, data);
@@ -355,6 +379,33 @@ sealed class InputEngine : IDisposable
         if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => SetKeyboardOnly(value)); return; }
         ReturnLocal();
         keyboardOnly = value;
+    }
+
+    public void SetSide(Side side)
+    {
+        if (disposed) return;
+        if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => SetSide(side)); return; }
+        if (peer is null || peer.Side == side) return;
+        StopRemote();
+        ReleaseReceived();
+        peer.Side = side;
+        SetKeyboardFocus(false);
+        edgeArmed = false;
+        peer.Send(new Frame(Kind.Layout, (int)(side == Side.Left ? Side.Right : Side.Left)));
+        Notify();
+    }
+
+    void PublishDisplaySize()
+    {
+        if (peer is not { Online: true }) return;
+        var bounds = Bounds();
+        if (bounds.Width == advertisedWidth && bounds.Height == advertisedHeight) return;
+        if (IsRemote) ReturnLocal();
+        if (peer.Send(new Frame(Kind.DisplayInfo, bounds.Width, bounds.Height)))
+        {
+            advertisedWidth = bounds.Width;
+            advertisedHeight = bounds.Height;
+        }
     }
 
     void SendPosition(int width, int height)
