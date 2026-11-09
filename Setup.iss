@@ -31,10 +31,21 @@ Type: files; Name: "{userprograms}\Desk Relay.lnk"
 [Icons]
 Name: "{userprograms}\CrossDesk"; Filename: "{app}\CrossDesk.exe"
 
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "CrossDesk"; ValueData: """{app}\CrossDesk.exe"""; Flags: uninsdeletevalue; Check: EnableStartup
+
 [Run]
 Filename: "{app}\CrossDesk.exe"; Description: "Open CrossDesk"; Flags: nowait postinstall skipifsilent
 
 [Code]
+function EnableStartup(): Boolean;
+var Configured: Cardinal; Command: String;
+begin
+  Result := not RegQueryDWordValue(HKCU, 'Software\CrossDesk', 'StartupConfigured', Configured);
+  if not Result then
+    Result := RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'CrossDesk', Command);
+end;
+
 function InitializeSetup(): Boolean;
 var
   Installed, MessageText: String;

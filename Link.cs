@@ -295,18 +295,39 @@ sealed class Peer : IDisposable
 
     async Task ReadLoop(Func<Frame, Task> receive)
     {
-        var bytes = new byte[16];
+        const int frameSize = 16;
+        var bytes = new byte[32 * frameSize];
+        int buffered = 0;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
         while (!stop.IsCancellationRequested)
         {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(5));
-            await tls.ReadExactlyAsync(bytes, timeout.Token).ConfigureAwait(false);
-            var kind = (Kind)BinaryPrimitives.ReadInt32LittleEndian(bytes);
-            if (kind is < Kind.KeepAlive or > Kind.Focus) throw new IOException("Unknown input event.");
-            if (kind != Kind.KeepAlive)
-                await receive(new Frame(kind, BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(4)),
-                    BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(8)),
-                    BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(12)))).ConfigureAwait(false);
+            int count = await tls.ReadAsync(bytes.AsMemory(buffered), timeout.Token).ConfigureAwait(false);
+            if (count == 0) throw new EndOfStreamException("The other computer disconnected.");
+            buffered += count;
+            int consumed = 0;
+            Frame? latestMove = null;
+            while (buffered - consumed >= frameSize)
+            {
+                var kind = (Kind)BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(consumed));
+                if (kind is < Kind.KeepAlive or > Kind.Focus) throw new IOException("Unknown input event.");
+                var frame = new Frame(kind,
+                    BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(consumed + 4)),
+                    BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(consumed + 8)),
+                    BinaryPrimitives.ReadInt32LittleEndian(bytes.AsSpan(consumed + 12)));
+                consumed += frameSize;
+                if (kind == Kind.Move) latestMove = frame;
+                else
+                {
+                    // Never coalesce across a click, keystroke, or focus transition.
+                    if (latestMove is { } move) await receive(move).ConfigureAwait(false);
+                    latestMove = null;
+                    if (kind != Kind.KeepAlive) await receive(frame).ConfigureAwait(false);
+                }
+            }
+            if (latestMove is { } finalMove) await receive(finalMove).ConfigureAwait(false);
+            buffered -= consumed;
+            if (buffered != 0) Buffer.BlockCopy(bytes, consumed, bytes, 0, buffered);
         }
     }
 

@@ -49,7 +49,7 @@ internal static class Native
     internal static extern bool GetCursorPos(out Point point);
     [DllImport("user32.dll")] internal static extern short GetAsyncKeyState(int key);
     [DllImport("user32.dll", SetLastError = true)]
-    internal static extern uint SendInput(uint count, Input[] inputs, int size);
+    internal static extern uint SendInput(uint count, in Input input, int size);
 
     internal static bool Key(int virtualKey, int scanCode, int flags)
     {
@@ -77,5 +77,11 @@ internal static class Native
             Union = new InputUnion { Mouse = new MouseInput { X = x, Y = y, Data = data, Flags = flags } }
         });
 
-    static bool Send(Input input) => SendInput(1, new[] { input }, Marshal.SizeOf<Input>()) == 1;
+    // Target the center of the pixel's 16-bit absolute-coordinate interval.
+    // Endpoint interpolation can land one pixel short and make a pinned cursor drift.
+    internal static int NormalizePixel(int pixel, int extent) =>
+        (int)(((2L * Math.Clamp(pixel, 0, extent - 1) + 1) * 65536) / (2L * extent));
+
+    static readonly int InputSize = Marshal.SizeOf<Input>();
+    static bool Send(Input input) => SendInput(1, in input, InputSize) == 1;
 }

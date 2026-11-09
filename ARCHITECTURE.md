@@ -34,3 +34,9 @@ Pairing and transfer connections use numeric LAN addresses. Outbound connections
 Update checks run separately from the local connection. The app uses the signed-in GitHub CLI account to look up the latest private release and compares its version tag with the running assembly version. With user confirmation it opens the exact Setup asset in the browser. Setup handles the installation prompt.
 
 Local checks covered certificate-pinned pairing, rejection of an incorrect secret, bidirectional input message ordering, movement coalescing, disconnect handling, and an approved 8 MiB file transfer. Focus message ordering was checked on one PC. Physical two-PC keyboard handoff and Wi-Fi latency remain unverified. Windows can restrict input injection into elevated applications and secure desktops.
+
+## Version 1.4 automatic connections and latency
+
+The saved-code mode discovers peers through UDP port 45873. Persistent device IDs select complementary connection roles. Both peers prove possession of a PBKDF2-derived shared key using HMAC over fresh nonces, both device IDs, and the server certificate fingerprint. The saved code is protected with Windows DPAPI for the current user. Network loss causes another discovery and authentication attempt.
+
+Hooks and remote injection run on a dedicated STA message loop. UI updates are posted asynchronously. The receiver reads frame batches and merges consecutive pointer positions without crossing click, key, or focus boundaries. This prevents queued obsolete positions from being replayed after temporary congestion. TCP NoDelay remains enabled.

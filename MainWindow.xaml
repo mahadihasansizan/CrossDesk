@@ -130,6 +130,21 @@
       </StackPanel>
      </StackPanel>
     </Border>
+    <Border Style="{StaticResource Panel}">
+     <StackPanel>
+      <TextBlock Text="Connect automatically" FontSize="18" FontWeight="SemiBold"/>
+      <TextBlock Text="Set the same private code on both PCs. CrossDesk finds your other computer and reconnects on your local network." Style="{StaticResource Secondary}" Margin="0,7,0,14"/>
+      <TextBlock Text="Shared code · at least 12 characters" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,7"/>
+      <Grid>
+       <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+       <PasswordBox x:Name="SharedCodeBox" Padding="12,10" MinHeight="40" AutomationProperties.Name="Shared connection code"/>
+       <Button x:Name="SaveAutoButton" Grid.Column="1" Content="Save and connect" Margin="10,0,0,0" Click="SaveAuto_Click"/>
+      </Grid>
+      <CheckBox x:Name="AutoConnectToggle" Content="Automatically connect and reconnect" Margin="0,14,0,6" Checked="AutoConnect_Changed" Unchecked="AutoConnect_Changed"/>
+      <CheckBox x:Name="StartupToggle" Content="Open CrossDesk when I sign in to Windows" Checked="Startup_Changed" Unchecked="Startup_Changed"/>
+      <TextBlock x:Name="AutoStatus" Text="Your code is saved securely for this Windows account." Style="{StaticResource Secondary}" FontSize="12" Margin="0,8,0,0"/>
+     </StackPanel>
+    </Border>
     <Border x:Name="PairPanel" Style="{StaticResource Panel}">
      <StackPanel>
       <TextBlock Text="Connect another PC" FontSize="18" FontWeight="SemiBold"/>

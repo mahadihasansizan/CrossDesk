@@ -15,6 +15,9 @@ public partial class MainWindow : Window
     SharingService? sharing;
     CancellationTokenSource? pairing;
     bool closing;
+    bool settingsReady;
+    AutoConnectSettings? autoSettings;
+    CancellationTokenSource? automatic;
     readonly CancellationTokenSource updateLifetime = new();
     static Version CurrentVersion => typeof(MainWindow).Assembly.GetName().Version!;
     int generation;
@@ -48,6 +51,21 @@ public partial class MainWindow : Window
             CreateButton.IsEnabled = false;
             JoinButton.IsEnabled = false;
             SetStatus("CrossDesk could not start. " + error.Message, true);
+        }
+        try
+        {
+            autoSettings = AutoConnectSettings.Load();
+            SharedCodeBox.Password = autoSettings.SharedCode;
+            AutoConnectToggle.IsChecked = autoSettings.Enabled;
+            StartupToggle.IsChecked = StartupSettings.Load();
+            settingsReady = true;
+            if (autoSettings.Enabled && autoSettings.SharedCode.Length >= 12 && input is not null)
+                StartAutomatic();
+        }
+        catch (Exception error)
+        {
+            settingsReady = true;
+            AutoStatus.Text = "Settings could not be loaded. " + error.Message;
         }
         using var install = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\DeskRelay_is1");
         if (install?.GetValue("InstallLocation") is string location &&
@@ -103,19 +121,24 @@ public partial class MainWindow : Window
     async void Firewall_Click(object sender, RoutedEventArgs e)
     {
         if (MessageBox.Show(this,
-            "Allow this CrossDesk executable to accept TCP connections from your local subnet, even if Windows changes the network profile?",
+            "Allow CrossDesk input and file connections (TCP) and automatic device discovery (UDP) from your local subnet, even if Windows changes the network profile?",
             "Allow local connections", MessageBoxButton.YesNo, MessageBoxImage.Question,
             MessageBoxResult.No) != MessageBoxResult.Yes) return;
         FirewallButton.IsEnabled = false;
         try
         {
             string path = Environment.ProcessPath ?? throw new IOException("CrossDesk executable path is unavailable.");
-            var info = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "netsh.exe"))
+            string quotedPath = "'" + path.Replace("'", "''") + "'";
+            string script = "$app = " + quotedPath + "; foreach ($protocol in @('TCP','UDP')) { " +
+                "& netsh.exe advfirewall firewall add rule ('name=CrossDesk local subnet ' + $protocol) " +
+                "dir=in action=allow ('protocol=' + $protocol) profile=any remoteip=LocalSubnet ('program=' + $app); " +
+                "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }; exit 0";
+            var info = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"))
             {
                 UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden
             };
-            foreach (string argument in new[] { "advfirewall", "firewall", "add", "rule", "name=CrossDesk local subnet",
-                "dir=in", "action=allow", "protocol=TCP", "profile=any", "remoteip=LocalSubnet", $"program={path}" })
+            foreach (string argument in new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand",
+                Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script)) })
                 info.ArgumentList.Add(argument);
             using var process = Process.Start(info) ?? throw new IOException("Windows Firewall could not open.");
             await process.WaitForExitAsync();
@@ -163,6 +186,7 @@ public partial class MainWindow : Window
 
     async void Create_Click(object sender, RoutedEventArgs e)
     {
+        StopAutomatic();
         RefreshAdapters();
         if (AdapterBox.SelectedItem is not Lan lan)
         {
@@ -203,6 +227,7 @@ public partial class MainWindow : Window
 
     async void Join_Click(object sender, RoutedEventArgs e)
     {
+        StopAutomatic();
         string code = JoinCode.Text.Trim();
         var fields = code.Split(':');
         if (fields.Length != 5 || !IPAddress.TryParse(fields[1], out var address))
@@ -262,10 +287,7 @@ public partial class MainWindow : Window
         SetStatus("Connected over your local network. Move across the shared edge to switch computers.");
         try
         {
-            await connected.Run(frame => Dispatcher.InvokeAsync(() =>
-            {
-                if (peer == connected) input?.Receive(frame);
-            }).Task);
+            await connected.Run(frame => input!.ReceiveAsync(connected, frame));
         }
         catch (Exception error)
         {
@@ -350,11 +372,13 @@ public partial class MainWindow : Window
     }
     void Disconnect_Click(object sender, RoutedEventArgs e)
     {
+        StopAutomatic();
         ResetConnection();
         SetStatus("Disconnected. Both computers have local control.");
     }
     void CancelPair_Click(object sender, RoutedEventArgs e)
     {
+        StopAutomatic();
         ResetConnection();
         SetStatus("Pairing cancelled.");
     }
@@ -414,11 +438,139 @@ public partial class MainWindow : Window
         : bytes >= 1L << 20 ? $"{bytes / (double)(1L << 20):0.0} MB"
         : bytes >= 1L << 10 ? $"{bytes / (double)(1L << 10):0.0} KB" : $"{bytes} bytes";
 
+    void SaveAuto_Click(object sender, RoutedEventArgs e)
+    {
+        if (SharedCodeBox.Password.Trim().Length < 12)
+        {
+            AutoStatus.Text = "Choose a shared code with at least 12 characters, then enter it on both PCs.";
+            SharedCodeBox.Focus();
+            return;
+        }
+        try
+        {
+            autoSettings ??= new AutoConnectSettings();
+            autoSettings.SharedCode = SharedCodeBox.Password.Trim();
+            autoSettings.Enabled = true;
+            autoSettings.Save();
+            settingsReady = false;
+            AutoConnectToggle.IsChecked = true;
+            settingsReady = true;
+            StartAutomatic();
+        }
+        catch (Exception error) { AutoStatus.Text = "Could not save connection settings. " + error.Message; }
+    }
+
+    void AutoConnect_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!settingsReady) return;
+        try
+        {
+            autoSettings ??= new AutoConnectSettings();
+            bool enabled = AutoConnectToggle.IsChecked == true;
+            if (enabled && autoSettings.SharedCode.Length < 12)
+            {
+                AutoStatus.Text = "Enter the same shared code on both PCs and choose Save and connect.";
+                return;
+            }
+            autoSettings.Enabled = enabled;
+            autoSettings.Save();
+            if (enabled) StartAutomatic();
+            else
+            {
+                StopAutomatic();
+                ResetConnection();
+                AutoStatus.Text = "Automatic connection is off.";
+            }
+        }
+        catch (Exception error) { AutoStatus.Text = "Could not change automatic connection. " + error.Message; }
+    }
+
+    void Startup_Changed(object sender, RoutedEventArgs e)
+    {
+        if (!settingsReady) return;
+        try { StartupSettings.SetEnabled(StartupToggle.IsChecked == true); }
+        catch (Exception error)
+        {
+            settingsReady = false;
+            StartupToggle.IsChecked = !StartupToggle.IsChecked;
+            settingsReady = true;
+            AutoStatus.Text = "Windows startup could not be changed. " + error.Message;
+        }
+    }
+
+    void StartAutomatic()
+    {
+        StopAutomatic();
+        ResetConnection();
+        if (closing || input is null || autoSettings is not { Enabled: true } ||
+            autoSettings.SharedCode.Length < 12) return;
+        var cancellation = new CancellationTokenSource();
+        automatic = cancellation;
+        _ = AutomaticLoop(cancellation, autoSettings.SharedCode);
+    }
+
+    void StopAutomatic()
+    {
+        automatic?.Cancel();
+        automatic = null;
+        if (!closing && settingsReady)
+            AutoStatus.Text = "Automatic connection is paused. Choose Save and connect to resume.";
+    }
+
+    async Task AutomaticLoop(CancellationTokenSource cancellation, string code)
+    {
+        var token = cancellation.Token;
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                RefreshAdapters();
+                if (AdapterBox.SelectedItem is not Lan lan)
+                {
+                    AutoStatus.Text = "Waiting for Wi-Fi or Ethernet…";
+                    await Task.Delay(2000, token);
+                    continue;
+                }
+                ResetConnection();
+                int attempt = generation;
+                try
+                {
+                    var service = PrepareSharing(lan);
+                    AutoStatus.Text = "Looking for your other PC with the same shared code…";
+                    var connected = await AutoConnect.ConnectAsync(lan, code,
+                        SideBox.SelectedIndex == 0 ? Side.Left : Side.Right, service.Endpoint, token);
+                    if (token.IsCancellationRequested || attempt != generation)
+                    {
+                        connected.Dispose();
+                        break;
+                    }
+                    AutoStatus.Text = "Connected automatically. CrossDesk will reconnect if the connection drops.";
+                    await RunConnection(connected, service, attempt);
+                }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
+                catch (Exception error)
+                {
+                    if (token.IsCancellationRequested) break;
+                    if (attempt == generation) ResetConnection();
+                    AutoStatus.Text = "Waiting to reconnect. " + error.Message;
+                }
+                await Task.Delay(2000, token);
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        finally
+        {
+            if (automatic == cancellation) automatic = null;
+            cancellation.Dispose();
+        }
+    }
+
     void OnClosed(object? sender, EventArgs e)
     {
         updateLifetime.Cancel();
         updateLifetime.Dispose();
         closing = true;
+        StopAutomatic();
         ResetConnection();
         input?.Dispose();
     }

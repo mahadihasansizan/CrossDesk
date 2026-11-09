@@ -4,13 +4,15 @@ using System.Windows.Threading;
 
 namespace DeskRelay;
 
-/// <summary>All public methods must be called on the creating dispatcher thread.</summary>
+/// <summary>Input is serialized on a dedicated message loop, independent of the application UI.</summary>
 sealed class InputEngine : IDisposable
 {
-    readonly Dispatcher dispatcher = Dispatcher.CurrentDispatcher;
+    readonly Dispatcher uiDispatcher = Dispatcher.CurrentDispatcher;
+    readonly Dispatcher dispatcher;
+    readonly Thread inputThread;
     readonly Native.HookProc mouseCallback;
     readonly Native.HookProc keyboardCallback;
-    readonly DispatcherTimer watchdog;
+    DispatcherTimer? watchdog;
     readonly HashSet<int> physicalKeys = new();
     readonly HashSet<int> localKeys = new();
     readonly HashSet<int> forwardedKeys = new();
@@ -19,7 +21,7 @@ sealed class InputEngine : IDisposable
     nint mouseHook, keyboardHook;
     Peer? peer;
     bool keyboardOnly;
-    bool disposed;
+    volatile bool disposed;
     bool shortcutHeld;
     bool edgeArmed = true;
     bool? keyboardFollowsPeer;
@@ -27,9 +29,10 @@ sealed class InputEngine : IDisposable
     double virtualX, virtualY;
     Native.Point anchor;
     long ignoreEdgeUntil;
-    public bool IsRemote { get; private set; }
-    public bool? KeyboardFollowsPeer => keyboardFollowsPeer;
-    public bool KeyboardOnly { get => keyboardOnly; set => SetKeyboardOnly(value); }
+    volatile bool isRemote;
+    public bool IsRemote { get => isRemote; private set => isRemote = value; }
+    public bool? KeyboardFollowsPeer => disposed ? null : dispatcher.Invoke(() => keyboardFollowsPeer);
+    public bool KeyboardOnly { get => disposed ? keyboardOnly : dispatcher.Invoke(() => keyboardOnly); set => SetKeyboardOnly(value); }
     public event Action? StateChanged;
     public event Action<string>? Error;
 
@@ -37,6 +40,35 @@ sealed class InputEngine : IDisposable
     {
         mouseCallback = MouseHook;
         keyboardCallback = KeyboardHook;
+        var started = new TaskCompletionSource<Dispatcher>(TaskCreationOptions.RunContinuationsAsynchronously);
+        inputThread = new Thread(() =>
+        {
+            var loop = Dispatcher.CurrentDispatcher;
+            try
+            {
+                Initialize(loop);
+                started.SetResult(loop);
+
+            }
+            catch (Exception exception)
+            {
+                started.TrySetException(exception);
+                return;
+            }
+            Dispatcher.Run();
+        })
+        {
+            IsBackground = true,
+            Name = "CrossDesk input",
+            Priority = ThreadPriority.AboveNormal
+        };
+        inputThread.SetApartmentState(ApartmentState.STA);
+        inputThread.Start();
+        dispatcher = started.Task.GetAwaiter().GetResult();
+    }
+
+    void Initialize(Dispatcher loop)
+    {
         var module = Native.GetModuleHandle(null);
         mouseHook = Native.SetWindowsHookEx(14, mouseCallback, module, 0);
         keyboardHook = Native.SetWindowsHookEx(13, keyboardCallback, module, 0);
@@ -48,13 +80,14 @@ sealed class InputEngine : IDisposable
             throw new Win32Exception(error, "Windows could not start input sharing.");
         }
         watchdog = new DispatcherTimer(TimeSpan.FromMilliseconds(100), DispatcherPriority.Input,
-            (_, _) => { if (peer is { Online: false }) Detach(); }, dispatcher);
+            (_, _) => { if (peer is { Online: false }) Detach(); }, loop);
         watchdog.Start();
     }
 
     public void Attach(Peer connection)
     {
-        dispatcher.VerifyAccess();
+        if (disposed) return;
+        if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => Attach(connection)); return; }
         Detach();
         peer = connection;
         SetKeyboardFocus(!connection.IsHost);
@@ -63,7 +96,8 @@ sealed class InputEngine : IDisposable
 
     public void Detach()
     {
-        dispatcher.VerifyAccess();
+        if (disposed) return;
+        if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => Detach()); return; }
         StopRemote();
         SetKeyboardFocus(null);
         ReleaseReceived();
@@ -72,7 +106,8 @@ sealed class InputEngine : IDisposable
 
     public void Toggle(bool onlyKeyboard)
     {
-        dispatcher.VerifyAccess();
+        if (disposed) return;
+        if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => Toggle(onlyKeyboard)); return; }
         if (IsRemote) ReturnLocal();
         else StartRemote(onlyKeyboard);
     }
@@ -100,7 +135,8 @@ sealed class InputEngine : IDisposable
 
     public void ReturnLocal()
     {
-        dispatcher.VerifyAccess();
+        if (disposed) return;
+        if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => ReturnLocal()); return; }
         if (!IsRemote) return;
         StopRemote();
         SetKeyboardFocus(false);
@@ -126,9 +162,23 @@ sealed class InputEngine : IDisposable
         Notify();
     }
 
+    // Awaiting the operation preserves key/button ordering while the network reader
+    // bypasses the UI dispatcher entirely. No unbounded dispatcher queue is created.
+    public Task ReceiveAsync(Frame frame) => disposed
+        ? Task.CompletedTask
+        : dispatcher.InvokeAsync(() => Receive(frame), DispatcherPriority.Send).Task;
+
+    public Task ReceiveAsync(Peer expected, Frame frame) => disposed
+        ? Task.CompletedTask
+        : dispatcher.InvokeAsync(() =>
+        {
+            if (ReferenceEquals(peer, expected)) Receive(frame);
+        }, DispatcherPriority.Send).Task;
+
     public void Receive(Frame frame)
     {
-        dispatcher.VerifyAccess();
+        if (disposed) return;
+        if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => Receive(frame)); return; }
         if (disposed) return;
         if (frame.Kind == Kind.Focus)
         {
@@ -184,7 +234,7 @@ sealed class InputEngine : IDisposable
                 break;
             default: return;
         }
-        if (!success) Error?.Invoke("Windows blocked remote input. Run both apps at the same permission level.");
+        if (!success) ReportInputError();
     }
 
     nint KeyboardHook(int code, nint message, nint data)
@@ -301,7 +351,8 @@ sealed class InputEngine : IDisposable
 
     public void SetKeyboardOnly(bool value)
     {
-        dispatcher.VerifyAccess();
+        if (disposed) return;
+        if (!dispatcher.CheckAccess()) { dispatcher.Invoke(() => SetKeyboardOnly(value)); return; }
         ReturnLocal();
         keyboardOnly = value;
     }
@@ -309,8 +360,8 @@ sealed class InputEngine : IDisposable
     void SendPosition(int width, int height)
     {
         if (peer?.Send(new Frame(Kind.Move,
-            (int)(virtualX * 65535 / Math.Max(1, width - 1)),
-            (int)(virtualY * 65535 / Math.Max(1, height - 1)))) != true) ReturnLocal();
+            Native.NormalizePixel((int)virtualX, width),
+            Native.NormalizePixel((int)virtualY, height))) != true) ReturnLocal();
     }
 
     void ReleaseReceived()
@@ -347,19 +398,34 @@ sealed class InputEngine : IDisposable
     static void Warp(Native.Point point)
     {
         var b = Bounds();
-        Native.Mouse(0xC001, 0, (int)((long)(point.X - b.Left) * 65535 / (b.Width - 1)),
-            (int)((long)(point.Y - b.Top) * 65535 / (b.Height - 1)));
+        Native.Mouse(0xC001, 0, Native.NormalizePixel(point.X - b.Left, b.Width),
+            Native.NormalizePixel(point.Y - b.Top, b.Height));
     }
-    void Notify() => StateChanged?.Invoke();
+    long lastInputError;
+    void ReportInputError()
+    {
+        long now = Environment.TickCount64;
+        if (now - lastInputError < 5000) return;
+        lastInputError = now;
+        uiDispatcher.BeginInvoke(() => Error?.Invoke("Windows blocked remote input. Run both apps at the same permission level."));
+    }
+
+    void Notify() => uiDispatcher.BeginInvoke(() => StateChanged?.Invoke());
 
     public void Dispose()
     {
-        dispatcher.VerifyAccess();
         if (disposed) return;
+        if (!dispatcher.CheckAccess())
+        {
+            dispatcher.Invoke(Dispose);
+            inputThread.Join();
+            return;
+        }
         Detach();
         disposed = true;
-        watchdog.Stop();
+        watchdog?.Stop();
         Native.UnhookWindowsHookEx(mouseHook);
         Native.UnhookWindowsHookEx(keyboardHook);
+        dispatcher.BeginInvokeShutdown(DispatcherPriority.Send);
     }
 }
