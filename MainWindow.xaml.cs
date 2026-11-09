@@ -372,6 +372,12 @@ public partial class MainWindow : Window
     }
     void Disconnect_Click(object sender, RoutedEventArgs e)
     {
+        if (autoSettings is { Enabled: true, SharedCode.Length: >= 12 })
+        {
+            StartAutomatic();
+            SetStatus("Reconnecting with your saved code…");
+            return;
+        }
         StopAutomatic();
         ResetConnection();
         SetStatus("Disconnected. Both computers have local control.");
@@ -440,18 +446,22 @@ public partial class MainWindow : Window
 
     void SaveAuto_Click(object sender, RoutedEventArgs e)
     {
-        if (SharedCodeBox.Password.Trim().Length < 12)
+        if (SharedCodeBox.Password.Trim().Length is < 12 or > 128)
         {
-            AutoStatus.Text = "Choose a shared code with at least 12 characters, then enter it on both PCs.";
+            AutoStatus.Text = "Choose a shared code between 12 and 128 characters, then enter it on both PCs.";
             SharedCodeBox.Focus();
             return;
         }
         try
         {
-            autoSettings ??= new AutoConnectSettings();
-            autoSettings.SharedCode = SharedCodeBox.Password.Trim();
-            autoSettings.Enabled = true;
-            autoSettings.Save();
+            var saved = new AutoConnectSettings
+            {
+                DeviceId = autoSettings?.DeviceId ?? Guid.NewGuid(),
+                SharedCode = SharedCodeBox.Password.Trim(),
+                Enabled = true
+            };
+            saved.Save();
+            autoSettings = saved;
             settingsReady = false;
             AutoConnectToggle.IsChecked = true;
             settingsReady = true;
@@ -465,10 +475,13 @@ public partial class MainWindow : Window
         if (!settingsReady) return;
         try
         {
-            autoSettings ??= new AutoConnectSettings();
+            autoSettings ??= AutoConnectSettings.Load();
             bool enabled = AutoConnectToggle.IsChecked == true;
             if (enabled && autoSettings.SharedCode.Length < 12)
             {
+                settingsReady = false;
+                AutoConnectToggle.IsChecked = false;
+                settingsReady = true;
                 AutoStatus.Text = "Enter the same shared code on both PCs and choose Save and connect.";
                 return;
             }
@@ -483,6 +496,49 @@ public partial class MainWindow : Window
             }
         }
         catch (Exception error) { AutoStatus.Text = "Could not change automatic connection. " + error.Message; }
+    }
+
+    void GenerateCode_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "Replace the saved code? Enter the new code on your other PC too.",
+            "Generate new code", MessageBoxButton.YesNo, MessageBoxImage.Question,
+            MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        SharedCodeBox.Password = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
+        SaveAuto_Click(sender, e);
+    }
+
+    void RemoveCode_Click(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show(this, "Remove the saved code from this PC and stop automatic connections?",
+            "Remove saved code", MessageBoxButton.YesNo, MessageBoxImage.Question,
+            MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        try
+        {
+            var settings = new AutoConnectSettings { DeviceId = autoSettings?.DeviceId ?? Guid.NewGuid() };
+            settings.Save();
+            autoSettings = settings;
+            settingsReady = false;
+            AutoConnectToggle.IsChecked = false;
+            SharedCodeBox.Clear();
+            settingsReady = true;
+            StopAutomatic();
+            ResetConnection();
+            AutoStatus.Text = "Saved code removed from this PC.";
+        }
+        catch (Exception error) { AutoStatus.Text = "Could not remove the code. " + error.Message; }
+    }
+
+    void CopySavedCode_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (autoSettings?.SharedCode.Length >= 12)
+            {
+                Clipboard.SetText(autoSettings.SharedCode);
+                AutoStatus.Text = "Saved code copied. Enter it on your other PC.";
+            }
+        }
+        catch { AutoStatus.Text = "The clipboard is busy. Try copying again."; }
     }
 
     void Startup_Changed(object sender, RoutedEventArgs e)
@@ -524,6 +580,9 @@ public partial class MainWindow : Window
         {
             while (!token.IsCancellationRequested)
             {
+                int attempt = generation;
+                try
+                {
                 RefreshAdapters();
                 if (AdapterBox.SelectedItem is not Lan lan)
                 {
@@ -532,9 +591,7 @@ public partial class MainWindow : Window
                     continue;
                 }
                 ResetConnection();
-                int attempt = generation;
-                try
-                {
+                attempt = generation;
                     var service = PrepareSharing(lan);
                     AutoStatus.Text = "Looking for your other PC with the same shared code…";
                     var connected = await AutoConnect.ConnectAsync(lan, code,

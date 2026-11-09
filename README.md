@@ -10,7 +10,7 @@ Install the .NET 10 SDK for Windows. From the repository root, run:
 dotnet publish DeskRelay.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ../standalone
 ```
 
-The portable app is `../standalone/CrossDesk.exe`. To build Setup, install Inno Setup 6 and run `ISCC.exe /DAppVersion=1.4.0 /O. Setup.iss`. Use the version from the project file when building a new release.
+The portable app is `../standalone/CrossDesk.exe`. To build Setup, install Inno Setup 6 and run `ISCC.exe /DAppVersion=1.4.1 /O. Setup.iss`. Use the version from the project file when building a new release.
 
 Use the same CrossDesk version on both PCs. Sharing works over the local network while both PCs remain connected and can reach each other, even if internet access is down. If Windows Firewall blocks pairing, select **Allow local connections** on both PCs and approve the Windows administrator prompt. The rule applies to that CrossDesk executable and accepts inbound TCP only from the local subnet across Windows network profiles.
 
@@ -22,7 +22,7 @@ See [Architecture](ARCHITECTURE.md) for pairing, input routing, transfers, and v
 
 ## Saved connection and startup
 
-On both PCs, enter the same shared code (12–128 characters) and choose **Save and connect**. Keep automatic connection enabled. CrossDesk discovers the other PC on the selected LAN adapter and retries after unexpected disconnects. A deliberate Disconnect pauses retries until Save and connect is used again.
+On both PCs, enter the same shared code (12–128 characters) and choose **Save and connect**. Keep automatic connection enabled. CrossDesk discovers the other PC on the selected LAN adapter and retries after unexpected disconnects. With automatic connection enabled, Disconnect immediately starts reconnection using the saved code. Turn off automatic connection to pause retries. The code remains saved until you explicitly replace or remove it. Generate new code and Remove saved code each ask for confirmation.
 
 Installed copies start at Windows sign-in by default. The startup checkbox disables that behavior. CrossDesk permits one instance per signed-in user.
 

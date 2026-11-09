@@ -7,6 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>CrossDesk</AssemblyName><Product>CrossDesk</Product><ApplicationIcon>CrossDesk.ico</ApplicationIcon>
-    <Version>1.4.0</Version>
+    <Version>1.4.1</Version>
   </PropertyGroup>
   <ItemGroup><Resource Include="CrossDesk.png"/></ItemGroup></Project>
