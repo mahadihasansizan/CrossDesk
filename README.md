@@ -1,6 +1,6 @@
 # CrossDesk
 
-CrossDesk shares a mouse, keyboards, clipboard, and files between two Windows PCs on the same local network. Pair both PCs with a fresh code. Move the shared pointer across the configured screen edge to direct both keyboards to that PC.
+CrossDesk shares a mouse, keyboards, clipboard, and files between two Windows PCs on the same local network. Enter the same saved shared code on both PCs and choose Save and connect. Move the shared pointer across the configured screen edge to direct both keyboards to that PC.
 
 ## Build
 
@@ -10,9 +10,9 @@ Install the .NET 10 SDK for Windows. From the repository root, run:
 dotnet publish DeskRelay.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o ../standalone
 ```
 
-The portable app is `../standalone/CrossDesk.exe`. To build Setup, install Inno Setup 6 and run `ISCC.exe /DAppVersion=1.4.1 /O. Setup.iss`. Use the version from the project file when building a new release.
+The portable app is `../standalone/CrossDesk.exe`. To build Setup, install Inno Setup 6 and run `ISCC.exe /DAppVersion=1.5.0 /O. Setup.iss`. Use the version from the project file when building a new release.
 
-Use the same CrossDesk version on both PCs. Sharing works over the local network while both PCs remain connected and can reach each other, even if internet access is down. If Windows Firewall blocks pairing, select **Allow local connections** on both PCs and approve the Windows administrator prompt. The rule applies to that CrossDesk executable and accepts inbound TCP only from the local subnet across Windows network profiles.
+Use the same CrossDesk version on both PCs. Sharing works over the local network while both PCs remain connected and can reach each other, even if internet access is down. If Windows Firewall blocks pairing, select **Allow LAN access** on both PCs and approve the Windows administrator prompt. The rule applies to that CrossDesk executable and accepts inbound TCP only from the local subnet across Windows network profiles.
 
 ## Updates
 
@@ -26,6 +26,8 @@ On both PCs, enter the same shared code (12–128 characters) and choose **Save 
 
 Installed copies start at Windows sign-in by default. The startup checkbox disables that behavior. CrossDesk permits one instance per signed-in user.
 
-Use **Allow local connections** on both PCs to permit TCP sharing and UDP discovery from the local subnet. Broadcast discovery requires a LAN that allows device-to-device traffic. Guest Wi-Fi isolation can prevent discovery and sharing.
+Use **Allow LAN access** on both PCs to permit TCP sharing and UDP discovery from the local subnet. Broadcast discovery requires a LAN that allows device-to-device traffic. Guest Wi-Fi isolation can prevent discovery and sharing.
 
 Input capture and injection run on a dedicated thread. Received movement backlogs are coalesced while clicks, keystrokes, and focus transitions keep their order. Local tests confirm this behavior and operation while the UI thread is blocked. End-to-end Wi-Fi latency on two physical PCs remains unmeasured.
+
+The connection screen has one visible, selectable shared-code field. Generate a code on one PC, copy it to the other, and save it on both. The code persists across restarts. Reconnect uses the saved code, and editing the field takes effect only after Save and connect.

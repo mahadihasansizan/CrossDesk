@@ -11,9 +11,7 @@ public partial class MainWindow : Window
 {
     InputEngine? input;
     Peer? peer;
-    Invitation? invitation;
     SharingService? sharing;
-    CancellationTokenSource? pairing;
     bool closing;
     bool settingsReady;
     AutoConnectSettings? autoSettings;
@@ -48,14 +46,13 @@ public partial class MainWindow : Window
         }
         catch (Exception error)
         {
-            CreateButton.IsEnabled = false;
-            JoinButton.IsEnabled = false;
+            SaveAutoButton.IsEnabled = false;
             SetStatus("CrossDesk could not start. " + error.Message, true);
         }
         try
         {
             autoSettings = AutoConnectSettings.Load();
-            SharedCodeBox.Password = autoSettings.SharedCode;
+            SharedCodeBox.Text = autoSettings.SharedCode;
             AutoConnectToggle.IsChecked = autoSettings.Enabled;
             StartupToggle.IsChecked = StartupSettings.Load();
             settingsReady = true;
@@ -184,95 +181,11 @@ public partial class MainWindow : Window
         return service;
     }
 
-    async void Create_Click(object sender, RoutedEventArgs e)
-    {
-        StopAutomatic();
-        RefreshAdapters();
-        if (AdapterBox.SelectedItem is not Lan lan)
-        {
-            SetStatus("Choose a local network connection first.", true);
-            return;
-        }
-        ResetConnection();
-        int attempt = generation;
-        var cancellation = new CancellationTokenSource();
-        pairing = cancellation;
-        try
-        {
-            var service = PrepareSharing(lan);
-            invitation = new Invitation(lan);
-            InviteCode.Text = invitation.Code;
-            InvitationPanel.Visibility = Visibility.Visible;
-            SetPairingBusy(true);
-            SetStatus("Waiting for your other PC. Allow CrossDesk on your private network if Windows asks.");
-            var connected = await invitation.Accept(
-                SideBox.SelectedIndex == 0 ? Side.Left : Side.Right,
-                cancellation.Token, service.Endpoint);
-            if (attempt != generation) { connected.Dispose(); return; }
-            invitation.Dispose();
-            invitation = null;
-            pairing = null;
-            await RunConnection(connected, service, attempt);
-        }
-        catch (Exception error)
-        {
-            if (attempt == generation && !closing)
-            {
-                ResetConnection();
-                SetStatus("Could not connect. " + error.Message, true);
-            }
-        }
-        finally { cancellation.Dispose(); }
-    }
-
-    async void Join_Click(object sender, RoutedEventArgs e)
-    {
-        StopAutomatic();
-        string code = JoinCode.Text.Trim();
-        var fields = code.Split(':');
-        if (fields.Length != 5 || !IPAddress.TryParse(fields[1], out var address))
-        {
-            SetStatus("Paste the complete pairing code from the other computer.", true);
-            return;
-        }
-        var lan = Lan.Find().FirstOrDefault(candidate => candidate.Contains(address));
-        if (lan is null)
-        {
-            SetStatus("Both computers must be on the same local network.", true);
-            return;
-        }
-        ResetConnection();
-        int attempt = generation;
-        var cancellation = new CancellationTokenSource();
-        pairing = cancellation;
-        try
-        {
-            SetPairingBusy(true);
-            SetStatus("Connecting securely to your other PC…");
-            var service = PrepareSharing(lan);
-            var connected = await Peer.Join(code, cancellation.Token, service.Endpoint);
-            if (attempt != generation) { connected.Dispose(); return; }
-            pairing = null;
-            await RunConnection(connected, service, attempt);
-        }
-        catch (Exception error)
-        {
-            if (attempt == generation && !closing)
-            {
-                ResetConnection();
-                SetStatus("Could not connect. " + error.Message +
-                    " Confirm both PCs are still on the same LAN and use Allow local connections on both PCs if Windows Firewall blocks pairing.", true);
-            }
-        }
-        finally { cancellation.Dispose(); }
-    }
-
     async Task RunConnection(Peer connected, SharingService service, int attempt)
     {
         peer = connected;
         service.SetRemote(connected.RemoteSharingEndpoint);
         input!.Attach(connected);
-        PairPanel.Visibility = Visibility.Collapsed;
         SharingPanel.Visibility = Visibility.Visible;
         ControlPanel.Visibility = Visibility.Visible;
         DisconnectButton.Visibility = Visibility.Visible;
@@ -292,14 +205,14 @@ public partial class MainWindow : Window
         catch (Exception error)
         {
             if (attempt == generation && !closing)
-                SetStatus("Connection ended. " + error.Message + " Pair again to reconnect.", true);
+                SetStatus("Connection ended. " + error.Message + " Automatic connection will retry with your saved code.", true);
         }
         finally
         {
             if (attempt == generation && !closing)
             {
                 ResetConnection();
-                SetStatus("The connection ended. Pair again to reconnect.", true);
+                SetStatus("The connection ended. Automatic connection will retry with your saved code.", true);
             }
         }
     }
@@ -308,26 +221,19 @@ public partial class MainWindow : Window
     {
         generation++;
         input?.Detach();
-        pairing?.Cancel();
-        pairing = null;
-        invitation?.Dispose();
-        invitation = null;
         peer?.Dispose();
         peer = null;
         sharing?.Dispose();
         sharing = null;
         if (closing) return;
         SetPairingBusy(false);
-        PairPanel.Visibility = Visibility.Visible;
         SharingPanel.Visibility = Visibility.Collapsed;
         ControlPanel.Visibility = Visibility.Collapsed;
         DisconnectButton.Visibility = Visibility.Collapsed;
-        InvitationPanel.Visibility = Visibility.Collapsed;
-        InviteCode.Clear();
         ConnectionBadge.Text = "Not connected";
         ConnectionBadge.Foreground = (System.Windows.Media.Brush)FindResource("Ink");
         RemoteName.Text = "Your other PC";
-        RemoteHint.Text = "Pair to get started";
+        RemoteHint.Text = "Use the same shared code";
         SideBox.IsEnabled = true;
         TransferBar.Visibility = Visibility.Collapsed;
         CancelTransferButton.Visibility = Visibility.Collapsed;
@@ -337,12 +243,8 @@ public partial class MainWindow : Window
 
     void SetPairingBusy(bool busy)
     {
-        CreateButton.IsEnabled = !busy;
-        JoinButton.IsEnabled = !busy;
-        JoinCode.IsEnabled = !busy;
         AdapterBox.IsEnabled = !busy;
         SideBox.IsEnabled = !busy;
-        CancelPairButton.Visibility = busy ? Visibility.Visible : Visibility.Collapsed;
     }
 
     void UpdateControl()
@@ -382,18 +284,6 @@ public partial class MainWindow : Window
         ResetConnection();
         SetStatus("Disconnected. Both computers have local control.");
     }
-    void CancelPair_Click(object sender, RoutedEventArgs e)
-    {
-        StopAutomatic();
-        ResetConnection();
-        SetStatus("Pairing cancelled.");
-    }
-    void Copy_Click(object sender, RoutedEventArgs e)
-    {
-        try { Clipboard.SetText(InviteCode.Text); SetStatus("Pairing code copied. Paste it into CrossDesk on your other PC."); }
-        catch { SetStatus("The clipboard is busy. Select and copy the code, or try again.", true); }
-    }
-
     void Clipboard_Changed(object sender, RoutedEventArgs e)
     {
         if (sharing is null) return;
@@ -446,7 +336,7 @@ public partial class MainWindow : Window
 
     void SaveAuto_Click(object sender, RoutedEventArgs e)
     {
-        if (SharedCodeBox.Password.Trim().Length is < 12 or > 128)
+        if (SharedCodeBox.Text.Trim().Length is < 12 or > 128)
         {
             AutoStatus.Text = "Choose a shared code between 12 and 128 characters, then enter it on both PCs.";
             SharedCodeBox.Focus();
@@ -457,7 +347,7 @@ public partial class MainWindow : Window
             var saved = new AutoConnectSettings
             {
                 DeviceId = autoSettings?.DeviceId ?? Guid.NewGuid(),
-                SharedCode = SharedCodeBox.Password.Trim(),
+                SharedCode = SharedCodeBox.Text.Trim(),
                 Enabled = true
             };
             saved.Save();
@@ -503,7 +393,7 @@ public partial class MainWindow : Window
         if (MessageBox.Show(this, "Replace the saved code? Enter the new code on your other PC too.",
             "Generate new code", MessageBoxButton.YesNo, MessageBoxImage.Question,
             MessageBoxResult.No) != MessageBoxResult.Yes) return;
-        SharedCodeBox.Password = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
+        SharedCodeBox.Text = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(12));
         SaveAuto_Click(sender, e);
     }
 
